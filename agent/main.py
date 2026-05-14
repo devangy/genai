@@ -1,3 +1,4 @@
+from typing import Self
 from google import genai
 import os
 from google.genai import types
@@ -17,7 +18,7 @@ class CalculatorTool():
             "name": "calculator",
             "description" : "performs basic mathematical calculations. use for a simple addition multiplication etc",
             "parameters" : {
-                "type" : "object",
+                "type" : "OBJECT",
                 "properties" : {
                     "expression" : {
                         "type" : "STRING",
@@ -28,22 +29,37 @@ class CalculatorTool():
             }
         }
 
+    def execute(self, expression):
+        """Evaluate mathematical expressions"""
+
+        try:
+            result = eval(expression)
+            return {"result": result}
+        except:
+            return {"error" :  "Invalid mathematical expression"}
+
     
 
-class Agent: 
+class Agent:
     """A simple AI agent that can answer questions in a multi-turn conversation"""
 
-    def __init__(self):
+    def __init__(self, tools):
         self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-        self.model =  "gemini-3-flash-preview"
+        self.model =  "gemma-4-26b-a4b-it"
         self.system_message = "You are a helpful expert assistant that breaks down problems into steps and solves them systematically."
         # short term memory
         self.messages = []
         self.console = Console()
-        self.tools = []
+        self.tools = tools
+        self.tools_map = {tool.get_schema()["name"] : tool for tool in tools}
 
-    
-    def _get_tool_schemas():
+
+    def _get_tool_schemas(self):
+        """Get tool schemas for all registered tools"""
+
+        return types.Tool(
+        function_declarations=[tool.get_schema() for tool in self.tools]
+        )
 
 
 
@@ -58,26 +74,45 @@ class Agent:
             "parts" : [{"text": message}] 
         })
 
+        tool_config = types.Tool(
+            function_declarations=[tool.get_schema() for tool in self.tools]
+        )
+
         
         response = self.client.models.generate_content(
             model=self.model,
             contents=self.messages,
             config=types.GenerateContentConfig(
                 system_instruction= self.system_message,
-                temperature = 0.8,
-                tools=self.tools,
-               # top_p = 0.95,
+                temperature = 0.4,
+                tools=[self._get_tool_schemas()],
+               #top_p = 0.95,
                 #top_k = 20,
             )
         )
-        print(dir(response))
 
+        # Check for a function call
+        if response.candidates[0].content.parts[0].function_call:
+            function_call = response.candidates[0].content.parts[0].function_call
+            print(f"Function to call: {function_call.name}")
+            print(f"ID: {function_call.id}")
+            print(f"Arguments: {function_call.args}")
+            #  In a real app, you would call your function here:
+            #  result = schedule_meeting(**function_call.args)
+        else:
+            print("No function call found in the response.")
+            print(response.text)
+            
+        for block in response:
+            print(block)
+
+        #print(dir(response))
 
 
         # inject llm response
         self.messages.append({
             "role" : "model",
-            "parts" : [{"text": message}]
+            "parts" : [{"text": response.text}]
         })
 
         return response
@@ -102,10 +137,19 @@ def main():
     
 
     print("Agent starting!")
-    
-    agent = Agent()
 
-    #print(agent.list_available_models())
+
+    calculator_tool = CalculatorTool()
+
+    my_tools = [
+        calculator_tool
+    ]
+    
+    agent = Agent(my_tools)
+
+
+
+    print(agent.list_available_models())
 
     res1 =  agent.chat("I have 5 apples. How many do you have?")
     agent.render(res1.text)
